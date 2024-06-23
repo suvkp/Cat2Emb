@@ -74,7 +74,7 @@ class EmbeddingGenerator:
         for col in self.categorical_columns:
             le = LabelEncoder()
             X[col] = le.fit_transform(X[col])
-            self.label_encoders[col] = le
+            self.label_encoders[col] = X[col].values
         return X[self.categorical_columns].values, self.categorical_columns
     
     def get_numerical_data(self, X):
@@ -85,4 +85,4 @@ class EmbeddingGenerator:
         X_transformed = []
         for col in self.categorical_columns:
             X_transformed.append(self.label_encoders[col].transform(X[col].values).reshape(-1, 1))
-        return np.hstack(X_transformed)
+    return np.hstack(X_transformed)
