@@ -3,6 +3,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Embedding, Flatten, Concatenate, Normalization
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 import numpy as np
+import pandas as pd
 
 class EmbeddingGenerator:
     def __init__(self, embedding_size=None):
@@ -12,6 +13,7 @@ class EmbeddingGenerator:
         self.embedding_size = embedding_size  
     
     def fit(self, X_train, y_train):
+        self.X_train = X_train # keep a copy a training data
         self._get_encoded_categorical_data(X_train)
         self._get_numerical_data(X_train)
         self._create_model()
@@ -22,20 +24,26 @@ class EmbeddingGenerator:
         predictions = self.model.predict(self._preprocess(X_test))
         return predictions
 
-    # def transform(self, X):
-    #     X_copy = X.copy()
-    #     self._get_encoded_categorical_data(X)
-    #     for c in self.categorical_columns:
-    #         if c in X_copy.columns:
-    #             temp = self._get_embedding
+    def transform(self, X):
+        X_copy = X.copy()
+        self._get_encoded_categorical_data(X_copy)
+        for c in self.categorical_columns:
+            if c in X_copy.columns:
+                embeddings = self._get_embedding_weights(self.model, c)
+                embeddings = embeddings.add_prefix(f'{c}_')
+            else:
+                raise ValueError(f'{c} column is not in the input dataset')
+            # mapping created based on training data
+            cat_idx_map = {cat:idx for cat, idx in zip(sorted(set(self.X_train[c])), range(self.X_train[c].nunique()))}
+            cat_idx_map = pd.DataFrame(cat_idx_map.items(), columns=[c,f'{c}_index'])
+            cat_embeddings_map = pd.merge(embeddings, cat_idx_map, on=f'{c}_index', how='left').drop([f'{c}_index'],axis=1)
+            X_copy = pd.merge(X_copy, cat_embeddings_map, on=c, how='inner')
+        return X_copy
 
     # Update: Need something better than mapping categories and their numerical indices using dictionary. Its too slow!
-    # def _get_embedding_weights(self, model, X, col, embed_layer_name):
-    #     X_cat_emb = pd.DataFrame(model.get_layer(embed_layer_name).get_weights()[0]).reset_index()
-    #     X_cat_emb = X_cat_emb.add_prefix('cat_')
-    #     cat_idx_map = pd.DataFrame({np.unique(X[col])[i]:i for i in range(X[col].nunique())}, columns=['cat', 'cat_idx'])
-    #     cat
-        
+    def _get_embedding_weights(self, model, embed_layer_name):
+        X_cat_emb = pd.DataFrame(model.get_layer(embed_layer_name).get_weights()[0]).reset_index()
+        return X_cat_emb        
     
     def _create_model(self):
         # Inputs and embeddings for categorical data
@@ -44,10 +52,10 @@ class EmbeddingGenerator:
         for idx, col in enumerate(self.categorical_columns):
             input_cat = Input(shape=(1,), name=f'input_{col}')
             if self.embedding_size is not None:
-                embed_cat = Embedding(input_dim=self.n_categories[idx], output_dim=self.embedding_size)(input_cat)
+                embed_cat = Embedding(input_dim=self.n_categories[idx], output_dim=self.embedding_size, name=col)(input_cat)
             else: 
                 embed_cat = Embedding(input_dim=self.n_categories[idx], 
-                                      output_dim=min(50, int(np.ceil((self.n_categories[idx])/2))))(input_cat)
+                                      output_dim=min(50, int(np.ceil((self.n_categories[idx])/2))), name=col)(input_cat)
             flatten_cat = Flatten()(embed_cat)
             categorical_input.append(input_cat)
             embedding_layers.append(flatten_cat)
@@ -69,7 +77,7 @@ class EmbeddingGenerator:
         # Create model
         model_inputs = [numerical_input] + categorical_input
         self.model = Model(inputs=model_inputs, outputs=output)
-        self.model.compile(optimizer='adam', loss='mean_absolute_error', metrics=['mean_absolute_error','mean_squared_error'])      
+        self.model.compile(optimizer='adam', loss='mean_absolute_error', metrics=['mean_absolute_error'])      
         return self
 
     def _get_encoded_categorical_data(self, X):
