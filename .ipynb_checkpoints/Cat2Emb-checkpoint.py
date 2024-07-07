@@ -6,22 +6,25 @@ import numpy as np
 import pandas as pd
 
 class EmbeddingGenerator:
-    def __init__(self, embedding_size=None):
+    def __init__(self, epochs=5, batch_size=128, embedding_size=None):
         self.model = None
         self.categorical_columns = []
         self.numerical_columns = []
+        self.epochs = epochs
+        self.batch_size = batch_size
         self.embedding_size = embedding_size  
+        self.oe = OrdinalEncoder(categories='auto', handle_unknown='use_encoded_value', unknown_value=9999, encoded_missing_value=9999, dtype=np.int32)
     
     def fit(self, X_train, y_train):
         self.X_train = X_train # keep a copy a training data
         self._get_encoded_categorical_data(X_train)
         self._get_numerical_data(X_train)
         self._create_model()
-        self.model.fit(self._preprocess(X_train), y_train, epochs=10, batch_size=32, verbose=1)
+        self.model.fit(self._preprocess(X_train, case='train'), y_train, epochs=self.epochs, batch_size=self.batch_size, verbose=1)
         return self
     
     def predict(self, X_test):
-        predictions = self.model.predict(self._preprocess(X_test))
+        predictions = self.model.predict(self._preprocess(X_test, case='predict'))
         return predictions
 
     def transform(self, X):
@@ -31,11 +34,22 @@ class EmbeddingGenerator:
             if c in X_copy.columns:
                 embeddings = self._get_embedding_weights(self.model, c)
                 embeddings = embeddings.add_prefix(f'{c}_')
+                # for unseen categories during training
+                # embeddings.iloc[-1] = np.zeros(embeddings.shape[1]).tolist()
+                extra_row = pd.DataFrame(np.zeros(embeddings.shape[1])).T
+                extra_row.columns = embeddings.columns.tolist()
+                extra_row.index = [9999]
+                embeddings = pd.concat([embeddings, extra_row],axis=0)
             else:
                 raise ValueError(f'{c} column is not in the input dataset')
             # mapping created based on training data
             cat_idx_map = {cat:idx for cat, idx in zip(sorted(set(self.X_train[c])), range(self.X_train[c].nunique()))}
+            # for unseen categories during training
+            cat_notin_X = [cat_tst for cat_tst in sorted(set(X_copy[c])) if cat_tst not in list(sorted(set(self.X_train[c])))]
+            if len(cat_notin_X) != 0:
+                cat_idx_map = {cat:9999 for cat in cat_notin_X}
             cat_idx_map = pd.DataFrame(cat_idx_map.items(), columns=[c,f'{c}_index'])
+            print(cat_idx_map)
             cat_embeddings_map = pd.merge(embeddings, cat_idx_map, on=f'{c}_index', how='left').drop([f'{c}_index'],axis=1)
             X_copy = pd.merge(X_copy, cat_embeddings_map, on=c, how='inner')
         return X_copy
@@ -80,11 +94,14 @@ class EmbeddingGenerator:
         self.model.compile(optimizer='adam', loss='mean_absolute_error', metrics=['mean_absolute_error'])      
         return self
 
-    def _get_encoded_categorical_data(self, X):
+    def _get_encoded_categorical_data(self, X, case='train'):
         self.categorical_columns = X.select_dtypes(include=['object', 'category']).columns.tolist()
         self.n_categories = [X[c].nunique() for c in self.categorical_columns]
-        oe = OrdinalEncoder(categories='auto', dtype=np.int32)
-        encoded_cat_data = oe.fit_transform(X[self.categorical_columns])
+        # oe = OrdinalEncoder(categories='auto', dtype=np.int32)
+        if case=='train':
+            encoded_cat_data = self.oe.fit_transform(X[self.categorical_columns])
+        if case=='predict':
+            encoded_cat_data = self.oe.transform(X[self.categorical_columns])
         return [encoded_cat_data[:,i] for i in range(encoded_cat_data.shape[1])]
     
     def _get_numerical_data(self, X):
@@ -92,7 +109,9 @@ class EmbeddingGenerator:
         num_data = X[self.numerical_columns].values
         return [num_data]
         
-    def _preprocess(self, X):
+    def _preprocess(self, X, case='train'):
         numeric_data = self._get_numerical_data(X)
-        encoded_cat_data = self._get_encoded_categorical_data(X)
+        encoded_cat_data = self._get_encoded_categorical_data(X, case)
+        print(encoded_cat_data)
+        print("total inputs: ", )
         return numeric_data + encoded_cat_data # total of 3 inputs (len(numeric_data + encoded_cat_data)=3) as the model architecture
