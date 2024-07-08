@@ -35,7 +35,6 @@ class EmbeddingGenerator:
                 embeddings = self._get_embedding_weights(self.model, c)
                 embeddings = embeddings.add_prefix(f'{c}_')
                 # for unseen categories during training
-                # embeddings.iloc[-1] = np.zeros(embeddings.shape[1]).tolist()
                 extra_row = pd.DataFrame(np.zeros(embeddings.shape[1])).T
                 extra_row.columns = embeddings.columns.tolist()
                 extra_row.index = [9999]
@@ -69,7 +68,7 @@ class EmbeddingGenerator:
                 embed_cat = Embedding(input_dim=self.n_categories[idx], output_dim=self.embedding_size, name=col)(input_cat)
             else: 
                 embed_cat = Embedding(input_dim=self.n_categories[idx], 
-                                      output_dim=min(50, int(np.ceil((self.n_categories[idx])/2))), name=col)(input_cat)
+                                      output_dim=min(2, int(np.ceil((self.n_categories[idx])/2))), name=col)(input_cat)
             flatten_cat = Flatten()(embed_cat)
             categorical_input.append(input_cat)
             embedding_layers.append(flatten_cat)
