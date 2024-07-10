@@ -2,6 +2,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Embedding, Flatten, Concatenate, Normalization
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+import copy
 import numpy as np
 import pandas as pd
 
@@ -28,7 +29,7 @@ class EmbeddingGenerator:
         return predictions
 
     def transform(self, X):
-        X_copy = X.copy()
+        X_copy = copy.deepcopy(X)
         self._get_encoded_categorical_data(X_copy)
         for c in self.categorical_columns:
             if c in X_copy.columns:
@@ -38,22 +39,27 @@ class EmbeddingGenerator:
                 extra_row = pd.DataFrame(np.zeros(embeddings.shape[1])).T
                 extra_row.columns = embeddings.columns.tolist()
                 extra_row.index = [9999]
+                extra_row[f'{c}_index'] = 9999
                 embeddings = pd.concat([embeddings, extra_row],axis=0)
             else:
                 raise ValueError(f'{c} column is not in the input dataset')
+
+            # TEST PRINT: print(f'embedding lookup table for {c}:\n{embeddings}')
             # mapping created based on training data
             cat_idx_map = {cat:idx for cat, idx in zip(sorted(set(self.X_train[c])), range(self.X_train[c].nunique()))}
             # for unseen categories during training
             cat_notin_X = [cat_tst for cat_tst in sorted(set(X_copy[c])) if cat_tst not in list(sorted(set(self.X_train[c])))]
+            # TEST PRINT: print(f'Category in {c} seen in training but not present in test: {cat_notin_X}\n ')
             if len(cat_notin_X) != 0:
+                print(f'Category in {c} seen in training but not present in test: {cat_notin_X}\n ')
                 cat_idx_map = {cat:9999 for cat in cat_notin_X}
             cat_idx_map = pd.DataFrame(cat_idx_map.items(), columns=[c,f'{c}_index'])
-            print(cat_idx_map)
-            cat_embeddings_map = pd.merge(embeddings, cat_idx_map, on=f'{c}_index', how='left').drop([f'{c}_index'],axis=1)
+            # TEST PRINT: print(f'final category to embeddings mapping:\n {cat_idx_map}')
+            cat_embeddings_map = pd.merge(embeddings, cat_idx_map, on=f'{c}_index', how='inner').drop([f'{c}_index'],axis=1)
+            # TEST PRINT: print(f'final category to embeddings mapping:\n {cat_embeddings_map}')
             X_copy = pd.merge(X_copy, cat_embeddings_map, on=c, how='inner')
         return X_copy
 
-    # Update: Need something better than mapping categories and their numerical indices using dictionary. Its too slow!
     def _get_embedding_weights(self, model, embed_layer_name):
         X_cat_emb = pd.DataFrame(model.get_layer(embed_layer_name).get_weights()[0]).reset_index()
         return X_cat_emb        
@@ -96,7 +102,6 @@ class EmbeddingGenerator:
     def _get_encoded_categorical_data(self, X, case='train'):
         self.categorical_columns = X.select_dtypes(include=['object', 'category']).columns.tolist()
         self.n_categories = [X[c].nunique() for c in self.categorical_columns]
-        # oe = OrdinalEncoder(categories='auto', dtype=np.int32)
         if case=='train':
             encoded_cat_data = self.oe.fit_transform(X[self.categorical_columns])
         if case=='predict':
@@ -111,6 +116,4 @@ class EmbeddingGenerator:
     def _preprocess(self, X, case='train'):
         numeric_data = self._get_numerical_data(X)
         encoded_cat_data = self._get_encoded_categorical_data(X, case)
-        print(encoded_cat_data)
-        print("total inputs: ", )
         return numeric_data + encoded_cat_data # total of 3 inputs (len(numeric_data + encoded_cat_data)=3) as the model architecture
